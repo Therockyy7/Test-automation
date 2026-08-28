@@ -27,6 +27,30 @@ async function gotoCell(page, cellAddress) {
   await new Promise((r) => setTimeout(r, 800));
 }
 
+// Đọc nội dung THẬT của ô đang chọn qua formula bar (#t-formula-bar-input) — đáng tin hơn
+// nhìn ảnh chụp, vì đây là giá trị Google Sheets đang thật sự hiển thị cho ô đó.
+async function readCellText(page) {
+  const el = await page.$('#t-formula-bar-input');
+  if (!el) throw new Error('không tìm thấy formula bar (#t-formula-bar-input)');
+  const text = await page.evaluate((e) => e.innerText, el);
+  return text.replace(/\n$/, '');
+}
+
+// Kiểm tra CỨNG (không phải nhìn ảnh) trước khi ghi: nhảy tới ô cột ID của đúng dòng định
+// ghi kết quả, đọc giá trị thật, so với expectedId. Sai → NÉM LỖI ngay, không ghi gì cả.
+// Đây là hàng rào bắt buộc để tránh ghi nhầm dòng (đã từng xảy ra thật, gây tốn công làm lại).
+async function verifyRowMatchesId(page, idColumn, row, expectedId) {
+  await gotoCell(page, `${idColumn}${row}`);
+  const actual = await readCellText(page);
+  if (actual !== expectedId) {
+    throw new Error(
+      `SAI DÒNG: mong ${idColumn}${row} = "${expectedId}", thực tế = "${actual}". ` +
+        `DỪNG lại — không ghi kết quả, kiểm tra lại số dòng trước khi thử lại.`
+    );
+  }
+  return actual;
+}
+
 // Nối thêm 1 dòng vào CUỐI nội dung hiện có của ô đang chọn — CHƯA lưu (chưa bấm Enter).
 // Luôn giữ nguyên nội dung cũ, không ghi đè. Chụp màn hình nếu truyền screenshotPath.
 async function typeAppendDraft(page, textToAppend, screenshotPath) {
@@ -57,4 +81,4 @@ async function commitCell(page, screenshotPath) {
   }
 }
 
-module.exports = { getOrOpenSheetPage, gotoCell, typeAppendDraft, commitCell };
+module.exports = { getOrOpenSheetPage, gotoCell, readCellText, verifyRowMatchesId, typeAppendDraft, commitCell };
