@@ -25,23 +25,35 @@ Kích hoạt khi user gõ "chạy EVAL_xxx", "test EVAL_xxx", hoặc yêu cầu 
 | Chrome debug | `http://localhost:9222` |
 | Target URL | `https://lp3svsq4-5112.asse.devtunnels.ms/` — dev tunnel, nếu hết hạn/đổi thì DỪNG và hỏi URL mới |
 | Login | đọc từ `.env` (`FASTDO_EMAIL`/`FASTDO_PASSWORD`), tổ chức "Water Quality - NH3T TEAM" |
-| Google Sheet | `1ArYMmaaqbb_g1aa9irROzGXAm1tULQvUw8rq-sXK8Hk`, tab "fEvaluation - VIBE", cột ID = A, cột kết quả = I |
+| Google Sheet | `1ArYMmaaqbb_g1aa9irROzGXAm1tULQvUw8rq-sXK8Hk`, tab "fEvaluation - VIBE", cột ID = A, cột kết quả TEST LẦN 1 = I (xem mục "Xác định vòng test" để tính cột cho lần khác) |
 | Catbox userhash | đọc từ `.env` (`CATBOX_USERHASH`) |
 
 Nếu user đưa link Sheet khác → dùng link đó (không hỏi lại), miễn cấu trúc cột giống (ID/Function/Tiêu đề/Mô tả/.../Trạng thái/Kết quả thực hiện).
 
 Đọc/verify nội dung Sheet: dùng MCP `sheet_read` nếu có kết nối (chỉ đọc, ổn định). Ghi Sheet: luôn qua `scripts/sheet_writer.js` (Puppeteer thao tác trực tiếp trên giao diện web) — KHÔNG dùng MCP cho phần ghi/quay video/upload.
 
+## Xác định vòng test (TEST LẦN N) trước khi ghi kết quả
+
+Sheet có nhiều khối cột lặp lại theo từng vòng test: "TEST LẦN 1", "TEST LẦN 2", "TEST LẦN 3"... (mỗi khối gồm Ưu tiên/Môi trường/Trạng thái/Kết quả thực hiện/DEV-QC NOTE, và từ TEST LẦN 3 trở đi có thêm cột "Test Date").
+
+- **Mặc định (user không nhắc gì tới việc test nhiều lần)**: chỉ ghi vào cột "Kết quả thực hiện" của **TEST LẦN 1** (cột I theo cấu hình mặc định) — không hỏi, không tự ý ghi thêm vào các lần khác.
+- **User có đề cập tới test nhiều lần / test lại / "lần thứ mấy"** (VD "test lại EVAL_009", "chạy EVAL_010 lần 2", "test thêm vài lần nữa"): PHẢI DỪNG và hỏi rõ muốn ghi vào TEST LẦN mấy trước khi chạy — không tự đoán lần nào.
+- **Cách xác định đúng cột "Kết quả thực hiện" cho 1 TEST LẦN N bất kỳ** (không hardcode cột — vị trí có thể lệch giữa các lần vì "Test Date" chỉ xuất hiện từ Lần 3 trở đi):
+  1. Đọc dòng 1 (dòng chứa nhãn gộp "TEST LẦN N") của Sheet qua `sheet_read`.
+  2. Tìm cột mà ô chứa đúng chữ "TEST LẦN N" (chỉ ô đầu tiên của vùng gộp có giá trị, các ô còn lại trong vùng gộp rỗng).
+  3. Cột "Kết quả thực hiện" nằm ở vị trí **+3** tính từ cột đó (thứ tự cố định trong mỗi khối: Ưu tiên(+0), Môi trường(+1), Trạng thái(+2), Kết quả thực hiện(+3), DEV/QC NOTE(+4)).
+  4. Dùng cột vừa tính được thay cho cột I mặc định ở toàn bộ bước "Ghi Sheet" phía dưới.
+
 ## Quy trình chuẩn cho mỗi testcase
 
-1. **Đọc nội dung testcase** từ Sheet (MCP `sheet_read`, hoặc mở tab Sheet bằng Puppeteer nếu không có MCP) — lấy đúng "Các bước" và kết quả mong đợi ở cột Mô tả (D) và xác định số dòng (dùng để tính địa chỉ ô cột I, VD dòng 15 → `I15`).
+1. **Đọc nội dung testcase** từ Sheet (MCP `sheet_read`, hoặc mở tab Sheet bằng Puppeteer nếu không có MCP) — lấy đúng "Các bước" và kết quả mong đợi ở cột Mô tả (D), xác định số dòng, và xác định đúng TEST LẦN N cần ghi theo rule ở mục trên (mặc định Lần 1 = cột I nếu user không nhắc gì).
 2. `node scripts/close_stale_tabs.js` — đóng tab Fastdo cũ.
 3. Nếu khu vực UI của case còn lạ (chưa có ví dụ tương tự trong "Bài học kỹ thuật" bên dưới) → dry-run: viết 1 script tạm connect CDP, login, điều hướng, chụp ảnh + liệt kê DOM (`page.$$eval('input, button, a, select', ...)`) để xác định đúng selector — KHÔNG quay video ở bước này, xoá script tạm sau khi dò xong.
 4. Copy `scripts/template_record.js` → `scripts/<TESTCASE_ID>_record.js`, sửa `TESTCASE_ID` và viết `runCustomSteps(ctx)` theo đúng bước testcase.
 5. Chạy: `node scripts/<TESTCASE_ID>_record.js` — script tự lo login/chọn tổ chức/quay video/upload Catbox, in ra dòng `SUMMARY_JSON: {...}` ở cuối (parse dòng này để lấy `videoUrl`, `pass`, `resultText`).
 6. **Verify độc lập** (bắt buộc — xem mục riêng bên dưới) trước khi tin `pass` trong SUMMARY_JSON.
 7. Ghi Sheet — dùng `scripts/sheet_writer.js`, KHÔNG gộp draft+commit trong 1 lệnh:
-   - Viết 1 script nhỏ gọi `getOrOpenSheetPage` → `gotoCell(page, 'I<dòng>')` → `typeAppendDraft(page, '- Video Test Record: ' + videoUrl, 'draft_check.png')`, dừng lại.
+   - Viết 1 script nhỏ gọi `getOrOpenSheetPage` → `gotoCell(page, '<cột Kết quả thực hiện đã xác định ở mục "Xác định vòng test">' + '<dòng>')` (mặc định `I<dòng>` nếu là TEST LẦN 1) → `typeAppendDraft(page, '- Video Test Record: ' + videoUrl, 'draft_check.png')`, dừng lại.
    - Đọc ảnh `draft_check.png` bằng tool Read — xác nhận nội dung đúng, giữ nguyên nội dung cũ (không bị ghi đè).
    - Đúng rồi mới chạy tiếp script gọi `commitCell(page, 'saved.png')`.
    - Đọc lại ô đó qua MCP `sheet_read` để xác nhận đã lưu đúng.
