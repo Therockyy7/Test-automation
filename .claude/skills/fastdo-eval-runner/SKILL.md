@@ -52,10 +52,13 @@ Sheet có nhiều khối cột lặp lại theo từng vòng test: "TEST LẦN 1
 4. Copy `scripts/template_record.js` → `scripts/<TESTCASE_ID>_record.js`, sửa `TESTCASE_ID` và viết `runCustomSteps(ctx)` theo đúng bước testcase.
 5. Chạy: `node scripts/<TESTCASE_ID>_record.js` — script tự lo login/chọn tổ chức/quay video/upload Catbox, in ra dòng `SUMMARY_JSON: {...}` ở cuối (parse dòng này để lấy `videoUrl`, `pass`, `resultText`).
 6. **Verify độc lập** (bắt buộc — xem mục riêng bên dưới) trước khi tin `pass` trong SUMMARY_JSON.
-7. Ghi Sheet — dùng `scripts/sheet_writer.js`, KHÔNG gộp draft+commit trong 1 lệnh:
-   - Viết 1 script nhỏ gọi `getOrOpenSheetPage` → `gotoCell(page, '<cột Kết quả thực hiện đã xác định ở mục "Xác định vòng test">' + '<dòng>')` (mặc định `I<dòng>` nếu là TEST LẦN 1) → `typeAppendDraft(page, '- Video Test Record: ' + videoUrl, 'draft_check.png')`, dừng lại.
-   - Đọc ảnh `draft_check.png` bằng tool Read — xác nhận nội dung đúng, giữ nguyên nội dung cũ (không bị ghi đè).
-   - Đúng rồi mới chạy tiếp script gọi `commitCell(page, 'saved.png')`.
+7. Ghi Sheet — dùng `scripts/sheet_writer.js`, chia làm 3 bước RIÊNG (không gộp), vì gõ nhầm ô phải làm lại từ đầu, tốn cả thời gian lẫn token:
+   - **Bước 7a — xác nhận địa chỉ ô TRƯỚC khi gõ bất kỳ ký tự nào**: gọi `getOrOpenSheetPage` → `gotoCell(page, '<cột>' + '<dòng>')`, rồi chụp ảnh NGAY (`cell_check.png`) — CHƯA gõ gì cả. Đọc ảnh này bằng tool Read, đối chiếu ĐỦ 2 điều trước khi đi tiếp:
+     - Cột A/B/C của dòng đang chọn (nhìn thấy trong ảnh, vì Sheet luôn hiện các cột đầu khi cuộn) đúng là `TESTCASE_ID` và tiêu đề của case đang chạy — không phải dòng khác trùng số dòng do đếm nhầm.
+     - Name Box (góc trên trái) hiện đúng địa chỉ ô dự định (VD `I34`), và cột đó đúng là cột "Kết quả thực hiện" của đúng TEST LẦN đã xác định ở mục trên — không lệch sang cột của TEST LẦN khác.
+     - Sai 1 trong 2 điều trên → SỬA lại `gotoCell` với địa chỉ đúng, chụp lại ảnh, kiểm tra lại — chỉ đi tiếp khi cả 2 đều khớp.
+   - **Bước 7b**: `typeAppendDraft(page, '- Video Test Record: ' + videoUrl, 'draft_check.png')` — gõ nội dung, CHƯA lưu. Đọc `draft_check.png` — xác nhận nội dung mới đúng, nội dung cũ vẫn còn nguyên (không bị ghi đè).
+   - **Bước 7c**: đúng cả 2 bước trên mới chạy `commitCell(page, 'saved.png')` để lưu thật.
    - Đọc lại ô đó qua MCP `sheet_read` để xác nhận đã lưu đúng.
 8. Gửi video (`<TESTCASE_ID>_AutoRecord.mp4`) + ảnh `saved.png` cho user (SendUserFile) — làm TRƯỚC bước dọn dẹp.
 9. Xoá `scripts/<TESTCASE_ID>_AutoRecord.mp4`, `scripts/<TESTCASE_ID>_record.js`, và mọi `.png` trung gian của case này — không tích tụ theo thời gian.
