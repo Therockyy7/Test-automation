@@ -3,3 +3,8 @@ node_modules/
 *.png
 *.log
 .env
+.auth/
+videos/
+recordings/
+.chrome_profile/
+diagnostics/

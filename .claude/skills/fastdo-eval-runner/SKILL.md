@@ -1,128 +1,325 @@
 ---
 name: fastdo-eval-runner
-description: Chạy test QA tự động cho testcase trong Google Sheet "fEvaluation" của Fastdo — điều khiển Chrome thật qua CDP, quay video (có con trỏ ảo), upload Catbox lấy link vĩnh viễn, ghi kết quả vào Sheet. Tự kích hoạt khi user gõ dạng "chạy EVAL_xxx" / "test EVAL_xxx".
+description: Chạy test QA tự động cho testcase trong Google Sheet "fEvaluation" của Fastdo — đọc đặc tả case từ Sheet, điều khiển Chrome thật qua CDP, quay video (có con trỏ ảo), upload Catbox lấy link vĩnh viễn, ghi kết quả vào Sheet. Tự kích hoạt khi user gõ dạng "test EVAL_xxx" / "chạy EVAL_xxx" / "kiểm thử EVAL_xxx".
 ---
 
 # Fastdo Eval Runner
 
-Bộ script Puppeteer chạy test QA cho các testcase trong sheet "fEvaluation - VIBE", theo đúng quy trình đã kiểm chứng thật (không phải lý thuyết). Đây là công cụ vận hành/QA thuần — KHÔNG liên quan tới quy trình phát triển phần mềm, không cần ticket ID.
+Bộ kiểm thử tự động cho testcase Fastdo trong Google Sheet `fEvaluation - VIBE`.
+Repo: `D:\FastDo\Test-Auto` — **mọi lệnh phải chạy với cwd là thư mục này**.
 
-## Khi dùng
+Nguyên tắc chia vai: **Claude viết kịch bản (1 lần mỗi case). CLI diễn (mãi mãi,
+0 token).** Đừng làm thay việc của CLI — đừng dùng computer-use, đừng chụp màn
+hình để click.
 
-Kích hoạt khi user gõ "chạy EVAL_xxx", "test EVAL_xxx", hoặc yêu cầu tương đương chạy 1 testcase cụ thể trong sheet fEvaluation.
+---
 
-## Chuẩn bị môi trường (kiểm tra trước mỗi lần chạy)
+# QUY TRÌNH BẮT BUỘC khi user nói "test EVAL_XXX"
 
-1. Chrome đang mở với `--remote-debugging-port=9222` — kiểm tra: `curl -s http://localhost:9222/json/version`. Không kết nối được → DỪNG, báo user mở Chrome debug mode.
-2. `node_modules` ở root repo đã cài chưa — nếu chưa: `npm install` (xem README.md).
-3. File `.env` ở root repo đã tồn tại chưa (chứa `FASTDO_EMAIL`, `FASTDO_PASSWORD`, `CATBOX_USERHASH`) — nếu chưa, copy từ `.env.example` và điền giá trị thật. `config.js` sẽ báo lỗi rõ ràng nếu thiếu biến nào.
-4. `ffmpeg` có trong PATH — kiểm tra `ffmpeg -version`. Thiếu → DỪNG, báo user.
+Làm đúng thứ tự. Không nhảy bước. Không đoán vòng test.
 
-## Cấu hình mặc định (trong `scripts/config.js`, override khi user cung cấp khác trong yêu cầu)
+## Bước 1 — Kiểm tra hạ tầng (~20s)
 
-| Key | Giá trị mặc định |
-|---|---|
-| Chrome debug | `http://localhost:9222` |
-| Target URL | `https://lp3svsq4-5112.asse.devtunnels.ms/` — dev tunnel, nếu hết hạn/đổi thì DỪNG và hỏi URL mới |
-| Login | đọc từ `.env` (`FASTDO_EMAIL`/`FASTDO_PASSWORD`), tổ chức "Water Quality - NH3T TEAM" |
-| Google Sheet | `1ArYMmaaqbb_g1aa9irROzGXAm1tULQvUw8rq-sXK8Hk`, tab "fEvaluation - VIBE", cột ID = A, cột kết quả TEST LẦN 1 = I (xem mục "Xác định vòng test" để tính cột cho lần khác) |
-| Catbox userhash | đọc từ `.env` (`CATBOX_USERHASH`) |
-
-Nếu user đưa link Sheet khác → dùng link đó (không hỏi lại), miễn cấu trúc cột giống (ID/Function/Tiêu đề/Mô tả/.../Trạng thái/Kết quả thực hiện).
-
-Đọc/verify nội dung Sheet: dùng MCP `sheet_read` nếu có kết nối (chỉ đọc, ổn định). Ghi Sheet: luôn qua `scripts/sheet_writer.js` (Puppeteer thao tác trực tiếp trên giao diện web) — KHÔNG dùng MCP cho phần ghi/quay video/upload.
-
-## Xác định vòng test (TEST LẦN N) trước khi ghi kết quả
-
-Sheet có nhiều khối cột lặp lại theo từng vòng test: "TEST LẦN 1", "TEST LẦN 2", "TEST LẦN 3"... (mỗi khối gồm Ưu tiên/Môi trường/Trạng thái/Kết quả thực hiện/DEV-QC NOTE, và từ TEST LẦN 3 trở đi có thêm cột "Test Date").
-
-- **Mặc định (user không nhắc gì tới việc test nhiều lần)**: chỉ ghi vào cột "Kết quả thực hiện" của **TEST LẦN 1** (cột I theo cấu hình mặc định) — không hỏi, không tự ý ghi thêm vào các lần khác.
-- **User có đề cập tới test nhiều lần / test lại / "lần thứ mấy"** (VD "test lại EVAL_009", "chạy EVAL_010 lần 2", "test thêm vài lần nữa"): PHẢI DỪNG và hỏi rõ muốn ghi vào TEST LẦN mấy trước khi chạy — không tự đoán lần nào.
-- **Cách xác định đúng cột "Kết quả thực hiện" cho 1 TEST LẦN N bất kỳ** (không hardcode cột — vị trí có thể lệch giữa các lần vì "Test Date" chỉ xuất hiện từ Lần 3 trở đi):
-  1. Đọc dòng 1 (dòng chứa nhãn gộp "TEST LẦN N") của Sheet qua `sheet_read`.
-  2. Tìm cột mà ô chứa đúng chữ "TEST LẦN N" (chỉ ô đầu tiên của vùng gộp có giá trị, các ô còn lại trong vùng gộp rỗng).
-  3. Cột "Kết quả thực hiện" nằm ở vị trí **+3** tính từ cột đó (thứ tự cố định trong mỗi khối: Ưu tiên(+0), Môi trường(+1), Trạng thái(+2), Kết quả thực hiện(+3), DEV/QC NOTE(+4)).
-  4. Dùng cột vừa tính được thay cho cột I mặc định ở toàn bộ bước "Ghi Sheet" phía dưới.
-
-## Quy trình chuẩn cho mỗi testcase
-
-1. **Đọc nội dung testcase** từ Sheet (MCP `sheet_read`, hoặc mở tab Sheet bằng Puppeteer nếu không có MCP) — lấy đúng "Các bước" và kết quả mong đợi ở cột Mô tả (D), xác định số dòng, và xác định đúng TEST LẦN N cần ghi theo rule ở mục trên (mặc định Lần 1 = cột I nếu user không nhắc gì).
-2. `node scripts/close_stale_tabs.js` — đóng tab Fastdo cũ.
-3. Nếu khu vực UI của case còn lạ (chưa có ví dụ tương tự trong "Bài học kỹ thuật" bên dưới) → dry-run: viết 1 script tạm connect CDP, login, điều hướng, chụp ảnh + liệt kê DOM (`page.$$eval('input, button, a, select', ...)`) để xác định đúng selector — KHÔNG quay video ở bước này, xoá script tạm sau khi dò xong.
-4. Copy `scripts/template_record.js` → `scripts/<TESTCASE_ID>_record.js`, sửa `TESTCASE_ID` và viết `runCustomSteps(ctx)` theo đúng bước testcase.
-5. Chạy: `node scripts/<TESTCASE_ID>_record.js` — script tự lo login/chọn tổ chức/quay video/upload Catbox, in ra dòng `SUMMARY_JSON: {...}` ở cuối (parse dòng này để lấy `videoUrl`, `pass`, `resultText`).
-6. **Verify độc lập** (bắt buộc — xem mục riêng bên dưới) trước khi tin `pass` trong SUMMARY_JSON.
-7. Ghi Sheet — dùng `scripts/sheet_writer.js`, chia làm nhiều bước RIÊNG (không gộp), vì gõ nhầm ô phải làm lại từ đầu, tốn cả thời gian lẫn token. Đã từng xảy ra thật: ghi nhầm sang dòng kế bên (VD định ghi dòng 21 lại thành dòng 22) — chỉ nhìn ảnh chụp KHÔNG đủ để bắt lỗi này một cách chắc chắn, nên bước 7a dưới đây dùng kiểm tra TỰ ĐỘNG bằng code, không phải Claude tự nhìn ảnh đoán:
-   - **Bước 7a — kiểm tra CỨNG bằng code trước khi gõ bất kỳ ký tự nào (bắt buộc, không được bỏ qua hay thay bằng nhìn ảnh)**: gọi `verifyRowMatchesId(page, config.SHEET_ID_COLUMN, row, TESTCASE_ID)` (trong `sheet_writer.js`) — hàm này tự nhảy tới ô cột ID của đúng dòng, đọc giá trị THẬT qua formula bar (`#t-formula-bar-input`, không phải suy đoán qua ảnh), so với `TESTCASE_ID`. Khớp thì trả về; sai thì tự ném lỗi ngay (`SAI DÒNG: mong ... thực tế ...`) — bắt lỗi này rồi STOP, tính lại đúng số dòng, không tự đoán/thử lại nhiều lần.
-   - **Bước 7b**: `gotoCell(page, '<cột Kết quả thực hiện đã xác định ở mục "Xác định vòng test">' + '<dòng>')` rồi chụp ảnh (`cell_check.png`) để có bằng chứng hình ảnh đi kèm — bước này chỉ để lưu vết, việc xác nhận ĐÚNG DÒNG đã do bước 7a đảm bảo bằng code.
-   - **Bước 7c**: `typeAppendDraft(page, '- Video Test Record: ' + videoUrl, 'draft_check.png')` — gõ nội dung, CHƯA lưu. Đọc `draft_check.png` bằng tool Read — xác nhận nội dung mới đúng, nội dung cũ vẫn còn nguyên (không bị ghi đè).
-   - **Bước 7d**: đúng cả 7a và 7c mới chạy `commitCell(page, 'saved.png')` để lưu thật.
-   - **Bước 7e**: gọi lại `readCellText(page)` (sau khi đã `gotoCell` về đúng ô kết quả) để đọc lại giá trị vừa lưu qua Puppeteer, đối chiếu chứa đúng `videoUrl` vừa upload — xác nhận độc lập, không tự tin vào bước 7d. (MCP `sheet_read` nếu còn kết nối cũng dùng được cho bước này, nhưng KHÔNG bắt buộc — MCP có thể ngắt kết nối giữa chừng, `readCellText` qua Puppeteer là đường chính không phụ thuộc MCP.)
-8. Gửi video (`<TESTCASE_ID>_AutoRecord.mp4`) + ảnh `saved.png` cho user (SendUserFile) — làm TRƯỚC bước dọn dẹp.
-9. Xoá `scripts/<TESTCASE_ID>_AutoRecord.mp4`, `scripts/<TESTCASE_ID>_record.js`, và mọi `.png` trung gian của case này — không tích tụ theo thời gian.
-
-## Verify độc lập (bắt buộc, không được bỏ qua)
-
-Sau khi script báo `pass: true`, LUÔN reload trang + đọc lại toàn bộ bảng/phần tử liên quan (không chỉ tin `SUMMARY_JSON` hay 1 kết quả XPath match đầu tiên trong `runCustomSteps`):
-- Nếu tên/nội dung có thể trùng với record cũ đã tồn tại từ lần test trước → so khớp theo mốc thời gian mới nhất (cột "Cập nhật"/timestamp hiển thị trên UI) để chắc chắn đang đọc đúng record vừa thao tác trong lần chạy NÀY, không phải 1 dòng cũ trùng tên còn sót lại.
-- Panel tóm tắt/preview trên UI (kiểu "Tóm tắt (luôn hiện)") CÓ THỂ LÀ BUG HIỂN THỊ, không phản ánh đúng state thật — bằng chứng đúng-sai phải lấy từ: (a) thử submit và xem có bị chặn validate không, hoặc (b) đọc trực tiếp giá trị DOM/API, không phải nhìn panel preview.
-
-## Bài học kỹ thuật (bắt buộc áp dụng)
-
-- **Tab mới cho mỗi lần quay chính thức** — `template_record.js` đã tự làm việc này (`browser.newPage()`), không tự ý đổi sang tái dùng tab cũ. Tái dùng tab qua nhiều lần gọi script gây lỗi `The circuit associated with this dispatcher is no longer available` (Blazor Server circuit chết do idle/nhiều lần điều hướng rời rạc).
-- **Ưu tiên điều hướng thẳng URL query** (VD `?tab=scale`, `?tab=criterion`, `?tab=cycle&view=editor&id=...`) thay vì click xuyên UI khi có thể — click chuyển tab đôi khi chỉ đổi active state mà không render nội dung (lỗi/độ trễ phía app, không phải do script). Muốn biết URL đúng cho 1 khu vực mới: dò bằng cách click qua UI 1 lần trong bước dry-run, đọc `page.url()` sau khi nội dung đã load, rồi dùng URL đó cho lần quay chính thức.
-- **`clickUntil`** (trong `human_input.js`) khi bắt buộc phải click qua UI (không có URL tương ứng): click → chờ điều kiện xuất hiện (vài giây) → nếu chưa có, click lại, tối đa 3 lần. Đã gặp thật với nút "Sửa" (mở kỳ đánh giá nháp) — lần click đầu chỉ đổi active state, lần 2 mới thực sự chuyển trang.
-- **Tái dùng dữ liệu nháp/tiền đề có sẵn** khi Sheet/hệ thống đã có record phù hợp (VD kỳ đánh giá nháp đã điền sẵn Bước 1) thay vì luôn tạo mới — giảm số bước phải tự động hoá. Không bắt buộc (date-time picker giờ tự động hoá được, xem mục dưới) nhưng vẫn là lựa chọn nhanh hơn khi tiện.
-- **XPath chọn phần tử**: viết trực tiếp ở cấp `page.$$()`, KHÔNG scope qua `elementHandle.$()` cho XPath lồng nhau — đã gặp lỗi không tìm thấy/không click được khi scope kiểu đó. VD đúng: `page.$$('xpath/.//tr[contains(., "A")][contains(., "B")]//a[contains(., "C")]')`.
-
-### Xử lý Flatpickr date-time picker
-
-Dùng `setFlatpickrField(page, placeholder, day, hour, minute)` trong `scripts/datetime_picker.js` — đã kiểm chứng bằng submit thật thành công. KHÔNG dùng `element._flatpickr.setDate()` (JS API trực tiếp) — không ổn định, Blazor re-render làm hỏng tham chiếu instance. Panel "Tóm tắt (luôn hiện)" không đáng tin để verify việc này — verify bằng cách thử bấm nút tiếp theo (Tiếp tục/Lưu) và xem có bị chặn bởi lỗi validate ngày giờ hay không.
-
-## Ví dụ `runCustomSteps` (dạng xác nhận dialog — tương tự EVAL_007)
-
-```js
-async function runCustomSteps(ctx) {
-  const { page, humanClick, waitXPath, clickUntil } = ctx;
-
-  await page.goto('https://lp3svsq4-5112.asse.devtunnels.ms/evaluation?tab=scale', {
-    waitUntil: 'domcontentloaded',
-    timeout: 20000,
-  });
-  await new Promise((r) => setTimeout(r, 3500));
-
-  const stopXPath =
-    './/tr[contains(., "Tên thang điểm")][contains(., "Khả dụng")][contains(., "Ngừng sử dụng")]//a[contains(., "Ngừng sử dụng")]';
-  const confirmXPath = './/button[contains(., "Xác nhận")]';
-
-  await clickUntil(
-    page,
-    async () => waitXPath(page, stopXPath, 3000),
-    async () => !!(await page.$('xpath/' + confirmXPath)),
-    { label: 'Ngừng sử dụng', maxAttempts: 3, checkTimeoutMs: 4000 }
-  );
-
-  const confirmBtn = await page.$('xpath/' + confirmXPath);
-  await humanClick(page, confirmBtn);
-  await new Promise((r) => setTimeout(r, 2500));
-
-  // Verify độc lập: reload + đọc lại toàn bảng, không tin ngay kết quả 1 dòng vừa thao tác.
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await new Promise((r) => setTimeout(r, 3000));
-  const rows = await page.$$eval('table tr', (trs) => trs.map((tr) => tr.innerText));
-  const targetRow = rows.find((r) => r.includes('Tên thang điểm') && r.includes('Ngừng dùng'));
-
-  return {
-    pass: !!targetRow,
-    resultText: targetRow
-      ? 'Xác nhận đúng: sau khi Ngừng sử dụng, trạng thái chuyển "Ngừng dùng".'
-      : 'FAIL: không thấy trạng thái Ngừng dùng sau khi xác nhận.',
-  };
-}
+```bash
+cd /d/FastDo/Test-Auto && npm run preflight
 ```
 
-## Ngoài phạm vi
+- `SẴN SÀNG CHẠY TEST` → đi tiếp.
+- `✗ Mẫu "..." KHÔNG còn trên tunnel này` → **DỪNG**. Báo user: fixture đã mất,
+  chạy sẽ chết oan, cần tạo lại mẫu sandbox trên app trước. Đừng chạy test.
+- `✗ Dev tunnel` → **DỪNG**. `TARGET_URL` trong `.env` đã hết hạn/đổi, hỏi user URL mới.
 
-- Không tự động hoá case cần **tài khoản test thứ 2** (permission/phân quyền) — DỪNG, ghi chú vào Sheet "cần QC chuẩn bị thêm tài khoản".
-- Không đụng gì tới repo `fastdo-server` — đây là repo hoàn toàn tách biệt.
-- Không dùng MCP `web-tester-mcp-server` cho phần ghi Sheet/quay video/upload — chỉ tự viết Puppeteer. MCP `sheet_read` (đọc) vẫn dùng bình thường nếu có sẵn.
+`preflight` **không chạy test nào** — nó chỉ là health check. Đừng nhầm nó với `npm test`.
+
+## Bước 2 — Đọc đặc tả case từ Sheet (~15s)
+
+```bash
+cd /d/FastDo/Test-Auto && npm run case -- EVAL_XXX
+```
+
+In ra `ID / Function / Tiêu đề / Mô tả (Điều kiện + Các bước + Kết quả mong muốn)
+/ Nền tảng`, kèm tóm tắt kết quả các vòng đã chạy.
+
+**Không mở Sheet trên trình duyệt để đọc bằng mắt.** Không chụp ảnh Sheet.
+Nếu case không có trong Sheet, tool sẽ liệt kê các mã đang có — báo user, đừng bịa đặc tả.
+
+## Bước 3 — Chốt vòng test với user
+
+Từ output Bước 2, đếm vòng đã có kết quả. Vòng tiếp theo = vòng cao nhất + 1.
+
+**Nói rõ con số đó rồi chờ user xác nhận trước khi chạy thật.** Ghi sai cột là
+ghi đè lên dữ liệu QC của vòng khác — không tự quyết.
+
+> "Sheet cho thấy EVAL_024 đã chạy LẦN 1–4 (đều DONE). Tôi sẽ ghi vào **TEST LẦN 5**. Đúng chưa?"
+
+Nếu user đã nói rõ vòng ngay từ đầu ("test EVAL_024 lần 3") thì dùng luôn, không hỏi lại.
+
+## Bước 4 — Kiểm xem case đã có file kịch bản chưa
+
+```bash
+cd /d/FastDo/Test-Auto && node src/runner.js
+```
+
+In danh sách case đang có file trong `src/testcases/`.
+
+### 4a. ĐÃ có file → sang Bước 5.
+
+### 4b. CHƯA có file → phải viết trước
+
+1. **Khám phá DOM bằng text, KHÔNG chụp màn hình:**
+
+   ```bash
+   cd /d/FastDo/Test-Auto && npm run probe -- "/evaluation?tab=template" --tables
+   ```
+
+   Cần trạng thái sâu (đã bấm vào editor):
+
+   ```bash
+   cd /d/FastDo/Test-Auto && PROBE_TEMPLATE="<tên mẫu Nháp có thật>" npm run probe -- "/evaluation?tab=template" --setup=src/tools/setups/draft-editor.js
+   ```
+
+   Lấy tên mẫu Nháp có thật từ output `preflight` (dòng "Mẫu Nháp đang có trên tunnel").
+
+2. **Tạo `src/testcases/eval_xxx.test.js`** theo khung ở mục Tham chiếu bên dưới.
+   Bọc từng bước bằng `ctx.step('nhãn', () => ...)`. Bám đúng "Các bước" và
+   "Kết quả mong muốn" trong đặc tả Sheet, đừng tự nghĩ ra tiêu chí khác.
+
+3. Sang Bước 5.
+
+## Bước 5 — Chạy nháp (~8s, KHÔNG cần hỏi user)
+
+```bash
+cd /d/FastDo/Test-Auto && npm test -- EVAL_XXX --no-record --no-sheet
+```
+
+Bước này không quay video, không ghi Sheet, không upload gì — an toàn, cứ chạy.
+
+- **PASS** → sang Bước 6.
+- **FAIL / CRASH** → đọc báo cáo, sửa, chạy lại Bước 5:
+
+  ```bash
+  cd /d/FastDo/Test-Auto && cat diagnostics/EVAL_XXX.fail.md
+  ```
+
+  Xem bảng chẩn đoán bên dưới. Đang bí giữa đường thì chèn `await ctx.dump('nhãn')`
+  vào đúng dòng đó trong file test rồi chạy lại — nó ghi digest DOM ra
+  `diagnostics/EVAL_XXX_dump_N_*.txt` và không dừng test.
+
+## Bước 6 — Chạy thật (~40s)
+
+Chỉ chạy sau khi user đã chốt vòng test ở Bước 3.
+
+```bash
+cd /d/FastDo/Test-Auto && npm test -- EVAL_XXX --round=<N>
+```
+
+Bước này **quay video, upload lên Catbox (host công khai), và ghi vào Google
+Sheet của team**. Đó là lý do phải chốt vòng trước.
+
+Rồi báo lại user: PASS/FAIL, thời gian, link Catbox, ô Sheet đã ghi. Runner in
+sẵn đủ 4 thứ đó trong bảng cuối, chép lại chứ đừng diễn giải thêm.
+
+---
+
+# Bảng chẩn đoán khi FAIL
+
+`diagnostics/EVAL_XXX.fail.md` có mục `## Chẩn đoán` ở đầu. **Đọc dòng đó trước
+tiên** — 3 hạng đầu rất dễ nhầm nhau và sửa sai chỗ:
+
+| Chẩn đoán | Làm gì |
+|---|---|
+| `LỚP PHỦ CHẶN CLICK` | đóng lớp phủ (xem cột cờ trong digest biết ai che). **KHÔNG mò selector** |
+| `THIẾU TIỀN ĐIỀU KIỆN` | fixture dữ liệu đã mất → chạy `npm run preflight`. **KHÔNG mò selector** |
+| `SELECTOR KHÔNG KHỚP` | lúc này mới lấy selector mới từ mục `DOM lúc chết` |
+| `HẾT HẠN CHỜ` | sửa điều kiện chờ (`H.waitFor`). **KHÔNG nới timeout cho qua** |
+| `HẠ TẦNG CDP` / `BLAZOR MẤT CIRCUIT` | chạy lại case, không phải lỗi app |
+| `BACKEND LỖI 5XX` | bug backend → báo dev, không sửa test |
+| `KẾT QUẢ NGHIỆP VỤ KHÔNG ĐẠT` | test đúng, app sai → **báo bug, KHÔNG sửa test cho pass** |
+
+Crash hạ tầng thì runner **cố ý không ghi Sheet** — lỗi chạy máy không phải kết
+quả kiểm thử. Đừng ép ghi.
+
+---
+
+# KHÔNG ĐƯỢC LÀM
+
+1. **Không chụp màn hình / computer-use để tìm selector hay đọc Sheet.** Đã có
+   `npm run probe` và `npm run case`. Chụp ảnh tốn 8–20k token cho 1 case và hay
+   đoán sai selector.
+2. **Không sửa testcase cho pass** khi chẩn đoán là `KẾT QUẢ NGHIỆP VỤ KHÔNG ĐẠT`.
+   Test đúng mà app sai thì đi báo bug.
+3. **Không tự chọn `--round`.** Chốt với user (Bước 3).
+4. **Không bỏ Bước 5.** Đừng chạy thẳng bản có ghi Sheet khi chưa chạy nháp xong.
+5. **Không tạo file test mới ngoài `src/testcases/`**, không sửa `session.js` /
+   `recorder.js` / `catbox.js` / `sheet_service.js` / `cursor_motion.js` /
+   `browser.js` khi chỉ đang viết 1 case.
+6. **Không tự quyết số case.** Làm đúng phạm vi user yêu cầu: user nói 1 mã thì
+   làm 1, nói 5 mã thì làm cả 5, nói "chạy nhóm EVAL_030→035" thì làm 6. Nhưng
+   **không tự mở rộng ra ngoài phạm vi đó** — không viết trước case chưa được yêu
+   cầu, không đề xuất "viết nốt các case còn thiếu". Sheet có ~120 mã và danh sách
+   **thay đổi liên tục**, nên viết trước cả loạt là làm ra file chết. Số case chưa
+   có kịch bản KHÔNG phải việc tồn cần dọn.
+
+---
+
+# Tham chiếu
+
+## Cấu trúc `src/`
+
+| File | Vai trò |
+|---|---|
+| `runner.js` | Điều phối toàn luồng bằng 1 lệnh CLI. Exit 1 khi có case FAIL |
+| `core/session.js` | Lưu/nạp cookies + localStorage (`.auth/user_state.json`) → bỏ qua đăng nhập và chọn tổ chức |
+| `core/cursor_motion.js` | Con trỏ ảo đỏ + hiệu ứng sóng khi click, cho video |
+| `core/recorder.js` | Quay MP4, mặc định 15fps (đổi bằng `RECORD_FPS` trong `.env`) |
+| `core/catbox.js` | Upload Catbox lấy link vĩnh viễn (có `userhash` + retry) |
+| `core/sheet_service.js` | Tìm dòng theo mã, tính cột `TEST LẦN N`, ghi Trạng thái + Kết quả, **verify lại sau khi ghi** |
+| `core/dom_digest.js` | Sinh digest DOM dạng text + cờ độ tin cậy. Nguồn duy nhất cho probe / `ctx.dump` / báo cáo lỗi |
+| `core/diagnostics.js` | Bắt console + request lỗi, nhật ký bước, phân loại lỗi, ghi `diagnostics/*.fail.md` |
+| `core/page_ready.js` | `waitForSettle()` — chờ Blazor render xong VÀ overlay loading tan |
+| `tools/probe.js` | CLI khám phá DOM |
+| `tools/preflight.js` | CLI kiểm hạ tầng + fixture |
+| `tools/case-info.js` | CLI đọc đặc tả case từ Sheet |
+| `testcases/` | Kịch bản từng case (`eval_017.test.js`...) |
+
+## Cờ CLI
+
+| `npm test` | |
+|---|---|
+| `--round=N` | ghi vào cột `TEST LẦN N` (mặc định 1) |
+| `--no-record` | không quay video (nhanh hơn ~20s) |
+| `--no-sheet` | không ghi Google Sheet |
+| `--no-upload` | quay nhưng không upload Catbox |
+| `--row=N` | chỉ định cứng dòng Sheet |
+| `--case-timeout=<giây>` | hạn giờ mỗi case (mặc định 150) |
+
+| `npm run probe` | |
+|---|---|
+| `--grep=<regex>` | lọc element theo nhãn/selector |
+| `--tables` | dump mọi `<table>` thành mảng |
+| `--text` | kèm `innerText` của `<main>` |
+| `--all` | in cả element ẩn/disabled |
+| `--setup=<file>` | chạy vài cú click để chạm trạng thái sâu |
+| `--limit=<n>` | trần số element (mặc định 120) |
+| `--keep-open` | giữ Chrome sống, lần probe sau nhanh hơn ~3s |
+
+Chạy nhiều case 1 lệnh dùng chung Chrome + session + tab Sheet, tiết kiệm ~8–10s
+**mỗi** case: `npm test -- EVAL_021 EVAL_022 EVAL_024 --round=2`.
+
+Session hết hạn: `npm run test:auth`.
+
+## Cờ độ tin cậy trong digest
+
+| Cờ | Nghĩa |
+|---|---|
+| `⚠ BỊ CHE bởi <X>` | có thứ khác đè lên. **Click mất tác dụng và KHÔNG ném lỗi** — đóng lớp phủ trước |
+| `⚠ TRONG OVERLAY` | element thuộc modal/popup đang mở |
+| `⚠ NGOÀI VIEWPORT` | cần `scrollIntoView` trước khi click |
+| `⚠ SELECTOR THEO VỊ TRÍ` | selector phải dùng `:nth-of-type` — vỡ khi Blazor render lại danh sách. Ưu tiên bám text |
+| `· click tâm trúng <X>` | icon trang trí đè lên tâm (thường vẫn click được) |
+| `(khớp N element - GIÒN)` | selector không định danh duy nhất, phải thu hẹp |
+
+## Khung file testcase
+
+```javascript
+const config = require('../config');
+const H = require('../core/evaluation_helpers');
+
+module.exports = {
+  id: 'EVAL_018',
+  title: 'Tiêu đề lấy từ Sheet',
+  targetPath: '/evaluation?tab=template',
+
+  getTargetUrl() {
+    return new URL(this.targetPath, config.TARGET_URL).toString();
+  },
+
+  async run(ctx) {
+    const { page, click, type, waitXPath, clickUntil, setFlatpickr, step, dump } = ctx;
+
+    await step('mo tab template', () => H.openEvaluationTab(page, click, 'template'));
+    // ... các bước theo đúng đặc tả Sheet
+
+    return {
+      pass: true,           // hoặc false
+      resultText: 'Mô tả chi tiết kết quả, sẽ được ghi vào cột Kết quả thực hiện',
+    };
+  },
+};
+```
+
+`ctx.step()` và `ctx.dump()` **không bắt buộc** — 7 case cũ không dùng vẫn chạy y
+nguyên. Nhưng case mới thì nên dùng `step()`: lúc FAIL sẽ biết chết ở bước nào.
+
+Helper dùng chung ở `core/evaluation_helpers.js`: `openEvaluationTab`,
+`openDraftByName`, `readGroupCards`, `openCriterionPicker`, `closeCriterionPicker`,
+`addCriterion`, `setGroupWeight`, `setCriterionWeight`, `removeEmptyGroups`,
+`clickActivate`, `saveDraft`, `dismissPushPopup`, `waitFor`, `sleep`... — **tra
+file đó trước khi tự viết thao tác mới**.
+
+## Ghi Google Sheet
+
+- Cột `Trạng thái` bị **ghi đè** bằng `DONE` (pass) hoặc `Fail` (fail), lấy từ `result.pass`.
+- Cột `Kết quả thực hiện` luôn **nối thêm**, không bao giờ xoá nội dung cũ:
+  `resultText` rồi tới dòng `- Video Test Record: <link>`. Cùng 1 link video thì
+  bỏ qua, không ghi trùng.
+- Bố cục mỗi vòng: `Ưu tiên (+0) | Môi trường (+1) | Trạng thái (+2) | Kết quả
+  thực hiện (+3) | DEV/QC NOTE (+4) | Test Date (+5)`. Nhãn `TEST LẦN N` ở dòng 1
+  so khớp **chính xác** (`TEST LẦN 1` là tiền tố của `TEST LẦN 10`).
+- Lưới được kéo về **1 lần** qua endpoint CSV `gviz` trong tab Sheet đang đăng
+  nhập rồi tra trong RAM. Cách dò từng ô qua Name Box còn trong file làm fallback.
+
+## Ngân sách thời gian (đo trên EVAL_017)
+
+| Chặng | Thời gian |
+|---|---|
+| Khởi tạo Chrome | 0.5s |
+| Phục hồi session | 1.8s |
+| Các bước kiểm thử | ~21s |
+| Kết thúc & lưu video | 1.5s |
+| Upload Catbox | 2.3s |
+| Ghi Google Sheet | 5.2s |
+
+Ba bẫy tốc độ đã gỡ, đừng để quay lại:
+
+1. **fps quay video** — 30fps làm mỗi lần chạy chậm thêm ~19s, vì mỗi khung hình
+   là 1 lần screencast qua CDP.
+2. **Dò ô Google Sheet từng cái** — mỗi ô ~0.7s; dò dòng 2→22 rồi cột A→R tốn ~28s.
+3. **`waitForSelector` cho thứ có thể không xuất hiện** — chờ trang cảnh báo dev
+   tunnel với timeout 3000 đốt trọn 3s mỗi lần chạy trong trường hợp phổ biến là
+   không có cảnh báo. Dùng `page.$()` cho DOM server render sẵn.
+
+Runner in bảng thời gian từng chặng ở cuối mỗi lần chạy — nhìn đó để biết chậm ở
+đâu, đừng đoán.
+
+## Bài học trên trang Mẫu đánh giá
+
+Rút ra từ lần sửa EVAL_017 (2026-09-05), áp dụng cho mọi case chạm trình soạn thảo:
+
+- **Không hardcode `id` mẫu vào URL.** Bản cũ trỏ cứng
+  `...&view=editor&id=2608280428469JSU4YU9FCHUR135JN59`; mẫu nháp đó bị xoá khỏi
+  DB nên trang trả *"Đã có lỗi khi tải dữ liệu. Thử lại"*. Thay vào đó: mở
+  `/evaluation?tab=template`, tìm dòng theo **tên mẫu**, bấm `Sửa`.
+- **Đóng popup "Bật thông báo đẩy" trước mọi thao tác.** Popup phủ lên bảng danh
+  sách, làm mọi click vào `Sửa` im lặng không tác dụng. Bấm `Từ chối` ngay sau khi
+  list load xong (`H.dismissPushPopup`).
+- **Kích hoạt thất bại VẪN ghi dữ liệu nháp xuống server.** Nhóm rỗng do test tạo
+  ra còn lại sau khi đóng trình duyệt và tích luỹ dần. Testcase phải tự chuẩn hoá
+  tiền điều kiện đầu mỗi lần chạy và dọn dẹp (`Xóa nhóm` + `Lưu nháp`) ở cuối.
+- **Xoá nhiều nhóm phải làm từng cái một bằng click chuột thật.** Blazor render
+  lại toàn bộ danh sách sau mỗi lần xoá, nên bắn nhiều `el.click()` liền trong 1
+  lượt `page.evaluate` thì các click sau rơi vào node đã bị gỡ khỏi DOM.
+- **Selector card nhóm:** mỗi nhóm là `div.box.mb-4` có chứa
+  `input[placeholder="Tên nhóm"]`. Nhóm rỗng nhận diện bằng chuỗi `Nhóm chưa có
+  tiêu chí nào`; ô lỗi của nhóm là `div.notification.is-danger`.
+
+## Tình trạng đã biết (2026-09-10)
+
+- `EVAL_017`, `EVAL_019`, `EVAL_020` đang **crash** vì mẫu sandbox
+  `EVAL_QA - Mau test nhom - Bản sao` không còn trên tunnel hiện tại. `preflight`
+  báo trước điều này. Cần tạo lại mẫu Nháp đó, hoặc sửa hằng số
+  `DRAFT_TEMPLATE_NAME` trong 3 file sang mẫu Nháp có thật.
+- Có file kịch bản: `EVAL_017, 019, 020, 021, 022, 023, 024`. Sheet có ~120 mã
+  (`EVAL_001` → `EVAL_116` kèm biến thể `007B/047C`...), nên phần lớn case sẽ đi
+  qua Bước 4b khi được yêu cầu. **Đây không phải việc tồn cần dọn** — xem điều 6
+  mục KHÔNG ĐƯỢC LÀM.

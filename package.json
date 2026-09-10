@@ -1,11 +1,17 @@
 {
   "name": "fastdo-test-auto",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Puppeteer-based QA automation cho testcase Fastdo (sheet fEvaluation)",
-  "main": ".claude/skills/fastdo-eval-runner/scripts/template_record.js",
+  "description": "Fastdo Fast & Visual QA Automation Test Runner",
+  "main": "src/runner.js",
   "scripts": {
-    "smoke-test": "node .claude/skills/fastdo-eval-runner/scripts/smoke_test.js"
+    "test": "node src/runner.js",
+    "test:eval": "node src/runner.js",
+    "test:auth": "node src/runner.js --auth-only",
+    "probe": "node src/tools/probe.js",
+    "smoke-test": "node .claude/skills/fastdo-eval-runner/scripts/smoke_test.js",
+    "preflight": "node src/tools/preflight.js",
+    "case": "node src/tools/case-info.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
